@@ -1,4 +1,7 @@
 #!/bin/bash
+#
+# Usage: bash network_monitor.sh
+# Cron:  * * * * * /bin/bash /path/to/network_monitor.sh
 
 ########################################
 # CONFIGURATION
@@ -72,7 +75,7 @@ run_ping_test() {
     local target="$1"
 
     local result
-    result="$(ping -c "$SAMPLES" -W "$TIMEOUT_MS" "$target" 2>>"$ERRFILE")"
+    result="$(/sbin/ping -c "$SAMPLES" -W "$TIMEOUT_MS" "$target" 2>>"$ERRFILE")"
 
     local times=()
     while IFS= read -r line; do times+=("$line"); done \
