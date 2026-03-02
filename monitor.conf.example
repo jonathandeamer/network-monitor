@@ -1,0 +1,13 @@
+# Copy this file to monitor.conf and edit for your machine.
+# monitor.conf is gitignored.
+
+# Required: identifies this machine in the CSV log
+MACHINE_LABEL="wifi"          # or "ethernet"
+
+# Optional: override defaults
+# LAN_IP="192.168.1.1"        # Default gateway
+# WAN1_IP="1.1.1.1"           # Cloudflare
+# WAN2_IP="8.8.8.8"           # Google DNS
+# DNS_QUERY="google.com"      # Domain for DNS timing test
+# SAMPLES=5                   # Pings per target
+# TIMEOUT_MS=2000             # Ping timeout in milliseconds

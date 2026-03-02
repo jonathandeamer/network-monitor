@@ -3,29 +3,38 @@
 ########################################
 # CONFIGURATION
 ########################################
-LOGDIR="$HOME/network_monitor"
-LOGFILE="$LOGDIR/ping_monitor_log.csv"
-ERRFILE="$LOGDIR/ping_monitor_errors.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONF_FILE="$SCRIPT_DIR/monitor.conf"
 
-# Ping Targets
-LAN_IP="192.168.0.1"
-WAN1_IP="1.1.1.1"   # Cloudflare
-WAN2_IP="8.8.8.8"   # Google DNS
+if [ ! -f "$CONF_FILE" ]; then
+    echo "Error: $CONF_FILE not found." >&2
+    echo "Copy monitor.conf.example to monitor.conf and edit it for this machine." >&2
+    exit 1
+fi
 
-PINGBIN="/sbin/ping"
-SAMPLES=5
-TIMEOUT=2
+source "$CONF_FILE"
 
-# MTU payload size for DOCSIS on Virgin Media
-MTU_SIZE=1472
+if [ -z "$MACHINE_LABEL" ]; then
+    echo "Error: MACHINE_LABEL must be set in $CONF_FILE" >&2
+    exit 1
+fi
 
-mkdir -p "$LOGDIR"
+# Defaults (overridable in monitor.conf)
+LAN_IP="${LAN_IP:-192.168.1.1}"
+WAN1_IP="${WAN1_IP:-1.1.1.1}"
+WAN2_IP="${WAN2_IP:-8.8.8.8}"
+DNS_QUERY="${DNS_QUERY:-google.com}"
+SAMPLES="${SAMPLES:-5}"
+TIMEOUT_MS="${TIMEOUT_MS:-2000}"
+
+LOGFILE="$SCRIPT_DIR/ping_monitor_log.csv"
+ERRFILE="$SCRIPT_DIR/ping_monitor_errors.log"
 
 ########################################
 # CSV Header
 ########################################
 if [ ! -f "$LOGFILE" ]; then
-    echo "timestamp,lan_loss_pct,lan_avg_ms,lan_jitter_ms,wan1_loss_pct,wan1_avg_ms,wan1_jitter_ms,wan2_loss_pct,wan2_avg_ms,wan2_jitter_ms,mtu_loss_pct,mtu_avg_ms,mtu_jitter_ms,fault_class,severity" > "$LOGFILE"
+    echo "timestamp,machine,lan_loss_pct,lan_avg_ms,lan_jitter_ms,wan1_loss_pct,wan1_avg_ms,wan1_jitter_ms,wan2_loss_pct,wan2_avg_ms,wan2_jitter_ms,dns_ms" > "$LOGFILE"
 fi
 
 timestamp=$(date +"%Y-%m-%d %H:%M:%S")
@@ -47,9 +56,10 @@ calc_jitter() {
     local n="${#arr[@]}"
     [ "$n" -le 1 ] && echo "NA" && return
     local sum=0
+    local diff abs
     for ((i=1; i<n; i++)); do
         diff=$(echo "${arr[$i]} - ${arr[$i-1]}" | bc -l)
-        abs=$(echo "${diff#-}" | bc -l)
+        abs=$(echo "if ($diff < 0) -1 * $diff else $diff" | bc -l)
         sum=$(echo "$sum + $abs" | bc -l)
     done
     echo "scale=3; $sum/($n-1)" | bc -l
@@ -60,16 +70,16 @@ calc_jitter() {
 ########################################
 run_ping_test() {
     local target="$1"
-    local extra_args="$2"
 
-    result="$($PINGBIN -c $SAMPLES -t $TIMEOUT $extra_args $target 2>>"$ERRFILE")"
+    local result
+    result="$(ping -c "$SAMPLES" -W "$TIMEOUT_MS" "$target" 2>>"$ERRFILE")"
 
     local times=()
     while IFS= read -r line; do times+=("$line"); done \
         < <(echo "$result" | grep 'time=' | awk -F'time=' '{print $2}' | sed 's/ ms//')
 
     local loss_pct
-    loss_pct=$(echo "$result" | grep -oE '[0-9]+% packet loss' | awk '{print $1}' | sed 's/%//')
+    loss_pct=$(echo "$result" | grep -oE '[0-9]+(\.[0-9]+)?% packet loss' | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)
     [ -z "$loss_pct" ] && loss_pct=100
 
     local avg jitter
@@ -80,34 +90,28 @@ run_ping_test() {
 }
 
 ########################################
+# DNS Resolution Timing
+########################################
+run_dns_test() {
+    local dns_output
+    dns_output=$(dig "@$LAN_IP" "$DNS_QUERY" 2>>"$ERRFILE")
+
+    local dns_ms
+    dns_ms=$(echo "$dns_output" | grep -oE 'Query time: [0-9]+' | grep -oE '[0-9]+')
+    [ -z "$dns_ms" ] && dns_ms="timeout"
+
+    echo "$dns_ms"
+}
+
+########################################
 # Collect all metrics
 ########################################
 lan_stats=$(run_ping_test "$LAN_IP")
 wan1_stats=$(run_ping_test "$WAN1_IP")
 wan2_stats=$(run_ping_test "$WAN2_IP")
-mtu_stats=$(run_ping_test "$WAN1_IP" "-s $MTU_SIZE")
-
-########################################
-# Classification (per-host view, neutral wording)
-########################################
-lan_loss=$(echo "$lan_stats" | cut -d',' -f1)
-wan1_loss=$(echo "$wan1_stats" | cut -d',' -f1)
-
-fault="OK"
-severity="0"
-
-if (( $(echo "$lan_loss > 10" | bc -l) )); then
-    fault="LAN Fault"           # Local network from this host's POV
-    severity="2"
-elif (( $(echo "$wan1_loss > 5" | bc -l) )); then
-    fault="WAN Fault"           # This host sees a major WAN issue
-    severity="2"
-elif (( $(echo "$wan1_loss > 0" | bc -l) )); then
-    fault="Minor WAN Fault"     # This host sees a small WAN issue
-    severity="1"
-fi
+dns_ms=$(run_dns_test)
 
 ########################################
 # Write output
 ########################################
-echo "$timestamp,$lan_stats,$wan1_stats,$wan2_stats,$mtu_stats,$fault,$severity" >> "$LOGFILE"
+echo "$timestamp,$MACHINE_LABEL,$lan_stats,$wan1_stats,$wan2_stats,$dns_ms" >> "$LOGFILE"
