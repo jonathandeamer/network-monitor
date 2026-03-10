@@ -54,7 +54,7 @@ The real utility of this script is running it on multiple machines at once. Clon
 
 ## Output
 
-**`ping_monitor_log.csv`** — one row per sample:
+**`ping_monitor_log.csv`** — one row per sample. See [example-combined-output.csv](example-combined-output.csv) for what a combined log from two machines looks like, or as a single-line example:
 
 ```
 timestamp,machine,lan_loss_pct,lan_avg_ms,lan_jitter_ms,wan1_loss_pct,wan1_avg_ms,wan1_jitter_ms,wan2_loss_pct,wan2_avg_ms,wan2_jitter_ms,dns_ms
